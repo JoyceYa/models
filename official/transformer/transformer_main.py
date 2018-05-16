@@ -150,7 +150,7 @@ def construct_host_call(metric_dict, params):
         contrib_summary.scalar("learning_rate", lr[0], step=gs)
         contrib_summary.scalar("global_norm/gradient_norm", gn[0], step=gs)
 
-        return summary.all_summary_ops()
+        return contrib_summary.all_summary_ops()
 
   # To log the current learning rate, and gradient norm for Tensorboard, the
   # summary op needs to be run on the host CPU via host_call. host_call
@@ -513,6 +513,7 @@ def run_transformer(flags_obj):
   # Add flag-defined parameters to params object
   params = PARAMS_MAP[flags_obj.param_set]().dict
   params["data_dir"] = flags_obj.data_dir
+  params["model_dir"] = flags_obj.model_dir
   params["num_parallel_calls"] = flags_obj.num_parallel_calls
 
   params["use_tpu"] = bool(flags_obj.tpu)  # was a tpu specified.
