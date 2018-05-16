@@ -547,7 +547,8 @@ def run_transformer(flags_obj):
   train_hooks = hooks_helper.get_train_hooks(
       flags_obj.hooks,
       tensors_to_log=TENSORS_TO_LOG,  # used for logging hooks
-      batch_size=schedule_manager.batch_size  # for ExamplesPerSecondHook
+      batch_size=schedule_manager.batch_size,  # for ExamplesPerSecondHook
+      use_tpu=params["use_tpu"]  # Not all hooks can run with TPUs
   )
   benchmark_logger = logger.config_benchmark_logger(flags_obj.benchmark_log_dir)
   benchmark_logger.log_run_info(

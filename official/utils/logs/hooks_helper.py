@@ -87,17 +87,24 @@ def get_logging_tensor_hook(every_n_iter=100, tensors_to_log=None, **kwargs):  #
       every_n_iter=every_n_iter)
 
 
-def get_profiler_hook(save_steps=1000, **kwargs):  # pylint: disable=unused-argument
+def get_profiler_hook(save_steps=1000, use_tpu=False, **kwargs):  # pylint: disable=unused-argument
   """Function to get ProfilerHook.
 
   Args:
     save_steps: `int`, print profile traces every N steps.
+    use_tpu: Boolean of whether computation occurs on a TPU.
     **kwargs: a dictionary of arguments to ProfilerHook.
 
   Returns:
     Returns a ProfilerHook that writes out timelines that can be loaded into
     profiling tools like chrome://tracing.
+
+  Raises:
+    NotImplemetedError if use_tpu is True
   """
+  if use_tpu:
+    raise NotImplementedError("To profile TPUs use the 'capture_tpu_profile' "
+                              "command line utility.")
   return tf.train.ProfilerHook(save_steps=save_steps)
 
 
