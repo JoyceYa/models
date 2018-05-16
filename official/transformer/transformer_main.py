@@ -31,6 +31,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 from absl import app as absl_app
 from absl import flags
 import tensorflow as tf
+from tensorflow.contrib import summary as contrib_summary
 # pylint: enable=g-bad-import-order
 
 from official.transformer import compute_bleu
@@ -112,15 +113,64 @@ def model_fn(features, labels, mode, params):
           mode=mode, loss=loss, predictions={"predictions": logits},
           eval_metric_ops=metrics.get_eval_metrics(logits, labels, params))
     else:
-      train_op = get_train_op(loss, params)
+      train_op, metric_dict = get_train_op(loss, params)
       if params["use_tpu"]:
         return tf.contrib.tpu.TPUEstimatorSpec(
-            mode=mode, loss=loss, train_op=train_op)
+            mode=mode, loss=loss, train_op=train_op,
+            host_call=construct_host_call(metric_dict, params)
+        )
+      record_scalars(metric_dict)
       return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 
-def get_learning_rate(learning_rate, hidden_size, learning_rate_warmup_steps,
-                      use_tpu):
+def construct_host_call(metric_dict, params):
+  def host_call_fn(gs, lr, gn):
+    """Training host call. Creates scalar summaries for training metrics.
+
+    This function is executed on the CPU and should not directly reference
+    any Tensors in the rest of the `model_fn`. To pass Tensors from the
+    model to the `metric_fn`, provide as part of the `host_call`. See
+    https://www.tensorflow.org/api_docs/python/tf/contrib/tpu/TPUEstimatorSpec
+    for more information.
+
+    Arguments should match the list of `Tensor` objects passed as the second
+    element in the tuple passed to `host_call`.
+
+    Args:
+      gs: `Tensor with shape `[batch]` for the global_step
+      lr: `Tensor` with shape `[batch]` for the learning_rate.
+      gn: `Tensor` with shape `[batch]` for the gradient_norm.
+
+    Returns:
+      List of summary ops to run on the CPU host.
+    """
+    gs = gs[0]
+    with contrib_summary.create_file_writer(params["model_dir"]).as_default():
+      with contrib_summary.always_record_summaries():
+        contrib_summary.scalar("learning_rate", lr[0], step=gs)
+        contrib_summary.scalar("global_norm/gradient_norm", gn[0], step=gs)
+
+        return summary.all_summary_ops()
+
+  # To log the current learning rate, and gradient norm for Tensorboard, the
+  # summary op needs to be run on the host CPU via host_call. host_call
+  # expects [batch_size, ...] Tensors, thus reshape to introduce a batch
+  # dimension. These Tensors are implicitly concatenated to
+  # [params['batch_size']].
+
+  gs_t = tf.reshape(tf.train.get_or_create_global_step(), [1])
+  lr_t = tf.reshape(metric_dict["learning_rate"], [1])
+  gn_t = tf.reshape(metric_dict["global_norm/gradient_norm"], [1])
+
+  return host_call_fn, [gs_t, lr_t, gn_t]
+
+
+def record_scalars(metric_dict):
+  for key, value in metric_dict.items():
+    tf.summary.scalar(name=key, tensor=value)
+
+
+def get_learning_rate(learning_rate, hidden_size, learning_rate_warmup_steps):
   """Calculate learning rate with linear warmup and rsqrt decay."""
   with tf.name_scope("learning_rate"):
     warmup_steps = tf.to_float(learning_rate_warmup_steps)
@@ -137,22 +187,16 @@ def get_learning_rate(learning_rate, hidden_size, learning_rate_warmup_steps,
     # is model/get_train_op/learning_rate/learning_rate
     tf.identity(learning_rate, "learning_rate")
 
-    if not use_tpu:
-      # TODO(robieta@): Get summaries working on TPUs.
-      # Save learning rate value to TensorBoard summary.
-      tf.summary.scalar("learning_rate", learning_rate)
-
     return learning_rate
 
 
 def get_train_op(loss, params):
-  """Generate training operation that updates variables based on loss."""
+  """Generate training op and summary dict."""
   with tf.variable_scope("get_train_op"):
     learning_rate = get_learning_rate(
         learning_rate=params["learning_rate"],
         hidden_size=params["hidden_size"],
-        learning_rate_warmup_steps=params["learning_rate_warmup_steps"],
-        use_tpu=params["use_tpu"])
+        learning_rate_warmup_steps=params["learning_rate_warmup_steps"])
 
     # Create optimizer. Use LazyAdamOptimizer from TF contrib, which is faster
     # than the TF core Adam optimizer.
@@ -173,13 +217,10 @@ def get_train_op(loss, params):
     train_op = optimizer.apply_gradients(
         gradients, global_step=global_step, name="train")
 
-    if not params["use_tpu"]:
-      # TODO(robieta@): Get summaries working on TPUs.
-      # Save gradient norm to Tensorboard
-      tf.summary.scalar("global_norm/gradient_norm",
-                        tf.global_norm(list(zip(*gradients))[0]))
+    gradient_norm = tf.global_norm(list(zip(*gradients))[0])
 
-    return train_op
+    return train_op, {"learning_rate": learning_rate,
+                      "global_norm/gradient_norm": gradient_norm}
 
 
 def translate_and_compute_bleu(estimator, subtokenizer, bleu_source, bleu_ref):
@@ -473,8 +514,11 @@ def run_transformer(flags_obj):
   params = PARAMS_MAP[flags_obj.param_set]().dict
   params["data_dir"] = flags_obj.data_dir
   params["num_parallel_calls"] = flags_obj.num_parallel_calls
-  params["batch_size"] = flags_obj.batch_size or params["batch_size"]
+
   params["use_tpu"] = bool(flags_obj.tpu)  # was a tpu specified.
+  params["batch_size"] = flags_obj.batch_size or (
+    params["default_batch_size_tpu"] if params["use_tpu"]
+    else params["default_batch_size"])
   params["static_batch"] = flags_obj.static_batch or params["use_tpu"]
   params["no_ffn_pad"] = params["use_tpu"]
 
