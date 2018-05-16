@@ -14,9 +14,18 @@
 # ==============================================================================
 """Abstract training on a step or epoch basis."""
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import math
+
 import tensorflow as tf
 
 from official.transformer.utils import dataset
+
+
+_TRAIN, _EVAL = tf.estimator.ModeKeys.TRAIN, tf.estimator.ModeKeys.EVAL
 
 
 class Manager(object):
@@ -62,17 +71,14 @@ class Manager(object):
       return self._single_iteration_train_steps
 
     return self.epochs_to_steps(
-        num_epochs=self._single_iteration_train_epochs,
-        mode=tf.estimator.ModeKeys.TRAIN)
+        num_epochs=self._single_iteration_train_epochs, mode=_TRAIN)
 
   @property
   def single_iteration_eval_steps(self):
     if not self.use_tpu:
       return None
 
-    return self.epochs_to_steps(
-        num_epochs=1,
-        mode=tf.estimator.ModeKeys.EVAL)
+    return self.epochs_to_steps(num_epochs=1, mode=_EVAL)
 
   @property
   def train_increment_str(self):
@@ -88,7 +94,10 @@ class Manager(object):
 
   @property
   def repeat_dataset(self):
-    # TODO(robieta@): handle TPU case of steps > 1 epoch
+    if (self._single_iteration_train_epochs is None and
+        self._single_iteration_train_steps >  dataset.NUM_EXAMPLES[_TRAIN]):
+      return ceil(self._single_iteration_train_steps /
+                  dataset.NUM_EXAMPLES[_TRAIN])
     return self._single_iteration_train_epochs
 
   def epochs_to_steps(self, num_epochs, mode):
