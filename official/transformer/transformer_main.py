@@ -114,6 +114,10 @@ def model_fn(features, labels, mode, params):
           eval_metric_ops=metrics.get_eval_metrics(logits, labels, params))
     else:
       train_op, metric_dict = get_train_op(loss, params)
+
+      # Epochs can be quite long. This give some intermediate information
+      # in TensorBoard.
+      metric_dict["minibatch_loss"] = loss
       if params["use_tpu"]:
         return tf.contrib.tpu.TPUEstimatorSpec(
             mode=mode, loss=loss, train_op=train_op,
@@ -124,7 +128,7 @@ def model_fn(features, labels, mode, params):
 
 
 def construct_host_call(metric_dict, params):
-  def host_call_fn(gs, lr, gn):
+  def host_call_fn(gs, ls, lr, gn):
     """Training host call. Creates scalar summaries for training metrics.
 
     This function is executed on the CPU and should not directly reference
@@ -147,6 +151,7 @@ def construct_host_call(metric_dict, params):
     gs = gs[0]
     with contrib_summary.create_file_writer(params["model_dir"]).as_default():
       with contrib_summary.always_record_summaries():
+        contrib_summary.scalar("minibatch_loss", ls[0], step=gs)
         contrib_summary.scalar("learning_rate", lr[0], step=gs)
         contrib_summary.scalar("global_norm/gradient_norm", gn[0], step=gs)
 
@@ -159,10 +164,11 @@ def construct_host_call(metric_dict, params):
   # [params['batch_size']].
 
   gs_t = tf.reshape(tf.train.get_or_create_global_step(), [1])
+  ls_t = tf.reshape(metric_dict["minibatch_loss"], [1])
   lr_t = tf.reshape(metric_dict["learning_rate"], [1])
   gn_t = tf.reshape(metric_dict["global_norm/gradient_norm"], [1])
 
-  return host_call_fn, [gs_t, lr_t, gn_t]
+  return host_call_fn, [gs_t, ls_t, lr_t, gn_t]
 
 
 def record_scalars(metric_dict):
