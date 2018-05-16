@@ -21,7 +21,7 @@ class TransformerBaseParams(model_helpers.ParameterContainer):
   """Parameters for the base Transformer model."""
   # Input params
   default_batch_size = 2048  # Maximum number of tokens per batch of examples.
-  default_batch_size_tpu = default_batch_size * 16
+  default_batch_size_tpu = default_batch_size * 8
   max_length = 256  # Maximum number of tokens per example.
 
   # Model params
@@ -62,7 +62,7 @@ class TransformerBaseParams(model_helpers.ParameterContainer):
 class TransformerBigParams(TransformerBaseParams):
   """Parameters for the big Transformer model."""
   default_batch_size = 4096
-  default_batch_size_tpu = default_batch_size * 16
+  default_batch_size_tpu = default_batch_size * 8
   hidden_size = 1024
   filter_size = 4096
   num_heads = 16
